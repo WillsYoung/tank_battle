@@ -1,3 +1,9 @@
 
 
 SCREEN_SIZE = (960, 720)
+
+UP = 0
+RIGHT = 1
+DOWN = 2
+LEFT = 3
+TANK_SIZE = 48
