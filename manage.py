@@ -1,9 +1,10 @@
 from time import sleep
 import random
 import pygame
+from threading import Thread
 from concurrent.futures import ThreadPoolExecutor
 from config.base_config import SCREEN_SIZE, UP, DOWN, LEFT, RIGHT, SCREEN_REFRESH as sleep_time
-from base.tank import Tank
+from base.tank import Tank, WeaponManage
 
 screen = None
 
@@ -27,7 +28,7 @@ def keydown_event(tank, key):
     elif key == pygame.K_a:
         tank.set_dir(LEFT)
     elif key == pygame.K_j:
-        tank.fire(screen)
+        tank.fire()
         print("fire")
     elif key == pygame.K_SPACE:
         tank.change_is_move()
@@ -49,7 +50,7 @@ def refresh_screen(tank):
     count = 1
     while True:
         count += 1
-        if count % 5000 == 0:
+        if count % 500 == 0:
             print(count)
         screen.fill((0,0,1))
         tank.draw(screen)
@@ -58,7 +59,7 @@ def refresh_screen(tank):
 
 def main():
     global screen
-    thread_pool = ThreadPoolExecutor(8)
+    thread_pool = ThreadPoolExecutor(32)
     pool = []
     pygame.init()
 
@@ -70,7 +71,8 @@ def main():
     tank = Tank()
     future = thread_pool.submit(refresh_screen, tank)
     pool.append(future)
-
+    # thread = Thread(tarjget=refresh_screen, args=[tank])
+    # thread.start()
     is_running = True
     while is_running:
 
@@ -78,11 +80,18 @@ def main():
             if event.type == pygame.QUIT:
                 is_running = False
             elif event.type == pygame.KEYDOWN:
-                keydown_event(tank, event.key)
+                # keydown_event(tank, event.key)
+                thread_pool.submit(keydown_event, tank, event.key)
             elif event.type == pygame.KEYUP:
-                keyup_event(tank, event.key)
+                # keyup_event(tank, event.key)
+                thread_pool.submit(keyup_event, tank, event.key)
+
+
 
         tank.moving()
+        # screen.fill((0, 0, 1))
+        # tank.draw(screen)
+        # pygame.display.flip()
 
         sleep(sleep_time)
     pygame.quit()

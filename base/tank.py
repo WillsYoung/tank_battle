@@ -1,12 +1,13 @@
 from copy import deepcopy
 import time
+from concurrent.futures import ThreadPoolExecutor
 import pygame
-
+from threading import Thread, Lock
 from config.base_config import SCREEN_SIZE, UP, DOWN, RIGHT, LEFT, TANK_SIZE, BULLET_SIZE, \
                                SCREEN_REFRESH
 
 
-
+thread_pool = ThreadPoolExecutor(16)
 
 # 游戏结束的字体图片
 gameover_word = 'source/image/gameover.png'
@@ -56,9 +57,10 @@ boom_pictures = [boom_picture0, boom_picture1, boom_picture2,
                  boom_picture3, boom_picture4, boom_picture5]
 
 
-class Tank(object):
+class Tank(pygame.sprite.Sprite):
 
     def __init__(self):
+        super().__init__()
         self.__image = pygame.image.load(tank1_0).convert_alpha()
 
         # 获取四个方向的坦克图片
@@ -69,10 +71,11 @@ class Tank(object):
         self.__tank = self.__tank_image_up
         # 设置初始方向、速度、生命、等级、武器、移动状态、位置、初始矩形
         self.__dir = UP
-        self.__speed = 0.5
+        self.__speed = 1
         self.__hp = 1
         self.__level = 1
-        self.__weapon = None
+        self.__weapon = Weapon()
+        self.__fire_ready = False
         self.__fired_bullets = []
         self.__is_move = False
         self.__x = 300
@@ -80,6 +83,8 @@ class Tank(object):
         self.__rect = (self.__x, self.__y, TANK_SIZE, TANK_SIZE)
         # 设置掩码碰撞，只有图片内部真正碰到才会碰撞
         self.mask = pygame.mask.from_surface(self.__tank)
+        # 设置锁，如果屏幕有多个开火请求，对装弹状态进行锁定
+        self.__fire_count = 0   # 统计发射情况，用于调试
 
     def get_x(self):
         return self.__x
@@ -128,28 +133,39 @@ class Tank(object):
                 self.__tank = self.__tank_image_left
                 if self.__x <= 0:
                     self.__x = 0
-        # print(self.__x, self.__y)
-        # print(self.__is_move)
+
         self.__rect = (self.__x, self.__y, TANK_SIZE, TANK_SIZE)
 
-    def fire(self, screen):
-        self.reload()
+    def fire(self):
+        self.__fire_count += 1
+        if self.__fire_ready == "loading":
+            print("第 %d 发射命令太过频繁，取消." % self.__fire_count)
+            print("tank 装弹中。。。")
+            return
+        elif not self.__fire_ready:
+            self.reload()
         fired_bullet = deepcopy(self.__weapon)
+        # print("发射 。。。。")
+        thread = Thread(target=fired_bullet.attack, args=[self])
+        thread.setDaemon(False)
+        thread.start()
+        # print("将发射后的子弹放入fired_bullets")
         self.__fired_bullets.append(fired_bullet)
-        fired_bullet.attack(screen)
-        self.__weapon = None
-
+        self.__fire_ready = False
+        self.reload()
+        # self.__weapon = Weapon()
 
     def reload(self):
+        self.__fire_ready = "loading"
         if self.__level == 1:
-            sleep_time = 0.2
+            sleep_time = 0.5
         elif self.__level == 2:
-            sleep_time = 0.1
+            sleep_time = 0.2
         else:
-            sleep_time = 0.01
+            sleep_time = 0.1
+        # print("装弹花费： %ss" % sleep_time)
         time.sleep(sleep_time)
-        self.__weapon = Weapon()
-        self.__weapon.ready(self)
+        self.__fire_ready = True
 
     def level_up(self):
         pass
@@ -160,20 +176,16 @@ class Tank(object):
     def draw(self, screen):
         if self.__hp > 0:
             screen.blit(self.__tank, self.__rect)
-            # for bullet in self.__fired_bullets:
-            #     print(bullet.get_attack())
-            #     if bullet.get_attack() > 0:
-            #         print("fired bullet hp", bullet)
-            #         bullet.draw(screen)
-            #     # else:
-            #     #     print(bullet)
-                #     self.__fired_bullets.remove(bullet)
-            # pygame.display.flip()
+            for bullet in self.__fired_bullets:
+                bullet.draw(screen)
 
 
-class Weapon(object):
+
+
+class Weapon(pygame.sprite.Sprite):
     """武器类，依托坦克实现"""
     def __init__(self):
+        super().__init__()
         self.__bullet_up = None
         self.__bullet_left = None
         self.__bullet_down = None
@@ -197,22 +209,19 @@ class Weapon(object):
     def get_attack(self):
         return self.__attack
 
-    def ready(self, tank):
+    def attack(self, tank):
         self.__x, self.__y = self.get_location(tank.get_x(), tank.get_y(), tank.get_dir())
         self.__attack = self.__level = tank.get_level()
-        self.__speed = self.__level + 2
+        self.__speed = self.__level * 2 + 2
         self.__dir = tank.get_dir()
-
-    def attack(self, screen):
         self.do_init()
-        print(self.__x, self.__y)
         while self.__attack > 0:
             self.moving()
-            self.draw(screen)
+            # self.draw(screen)
             time.sleep(SCREEN_REFRESH)
 
     def moving(self):
-        print(self.__x, self.__y)
+        # print("bullet moving: 子弹位置：", self.__x, self.__y)
         if self.__dir == UP:
             self.__bullet = self.__bullet_up
             self.__y -= self.__speed
@@ -237,7 +246,6 @@ class Weapon(object):
             if self.__x <= 0:
                 self.__x = 0
                 self.__attack = 0
-        # print(self.__x, self.__y)
         self.__rect = (self.__x, self.__y, BULLET_SIZE, BULLET_SIZE)
 
     def get_location(self, x, y, tank_dir):
@@ -259,7 +267,31 @@ class Weapon(object):
 
     def draw(self, screen):
         if self.__attack > 0:
-            print("画出子弹")
-            print(self.__bullet)
-            print(self.__rect)
+            # if self.__rect is None:
+            # print("画出子弹")
+            # print(self.__bullet)
+            # print("子弹位置: ", self.__rect)
+            if self.__rect is None:
+                print("未成功发射的子弹, 此处有未知bug")
+                return
             screen.blit(self.__bullet, self.__rect)
+
+
+class WeaponManage(object):
+
+    def __new__(cls, *args, **kwargs):
+        if not hasattr(cls, "_instance"):
+            my_instance = super(WeaponManage, cls)
+            cls._instance = my_instance.__new__(cls, *args, **kwargs)
+        return cls._instance
+
+    def __init__(self):
+        self.__p1_weapon = []
+
+
+    def save_p1_weapon(self, weapon):
+        self.__p1_weapon.append(weapon)
+
+    def draw(self, screen):
+        for weapon in self.__p1_weapon:
+            weapon.draw(screen)
